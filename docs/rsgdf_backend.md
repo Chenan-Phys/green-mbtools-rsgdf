@@ -12,6 +12,11 @@ inherited attribute ownership. Nested contexts in one thread are supported;
 concurrent contexts are rejected. Unrelated legacy builds must not run concurrently
 with this class-global hook.
 
+HF exports explicitly use ordinary integrals. A retained `cderi_ewald.h5` does
+not enable a correction implicitly. Correlation exports request that file
+explicitly; missing or incompatible corrected blocks fail before existing
+export files are replaced.
+
 RSGDF stores the actual metric whiteners from PySCF's q-group iterator, including
 conjugation, rank cutoff and Cholesky/eigenvalue convention, in its internal CDERI
 metadata. Stored auxiliary q transformations use those exact frames. Recomputing

@@ -245,7 +245,7 @@ class pyscf_pbc_init (pyscf_init):
         '''
         # --- Step 1: mean-field integrals (bare Coulomb kernel) --------------
         mydf = comm.construct_gdf(self.args, self.cell, self.kmesh)
-        int_utils.compute_integrals(self.args, self.cell, mydf, self.kmesh, nao, X_k, self.args.hf_int_path, "cderi.h5", True, True)
+        int_utils.compute_integrals(self.args, self.cell, mydf, self.kmesh, nao, X_k, self.args.hf_int_path, "cderi.h5", True, True, cderi_name2=None)
         mydf = None
 
         # --- Step 2: correlated integrals with finite-size correction --------
@@ -499,7 +499,7 @@ class pyscf_mol_init (pyscf_init):
         h_in.close()
         h_out.close()
         mydf = comm.construct_gdf(self.args, self.kcell, self.kmesh)
-        int_utils.compute_integrals(self.args, self.kcell, mydf, self.kmesh, nao, X_k, "df_hf_int", "cderi.h5", True, self.args.keep_cderi)
+        int_utils.compute_integrals(self.args, self.kcell, mydf, self.kmesh, nao, X_k, "df_hf_int", "cderi.h5", True, self.args.keep_cderi, cderi_name2=None)
         mydf = None
 
     def df_object(self, mydf=None):

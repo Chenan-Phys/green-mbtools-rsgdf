@@ -359,11 +359,35 @@ def integrals_grid(mycell, kmesh):
     return kptij_idx, kij_conj, kij_trans, kpair_irre_list, num_kpair_stored, kptis, kptjs
 
 
-def compute_integrals(args, mycell, mydf, kmesh, nao, X_k=None, basename = "df_int", cderi_name="cderi.h5", keep=True, keep_after=False, cderi_name2="cderi_ewald.h5"):
+def _validate_corrected_blocks(reader, kmesh, nao, naux):
+    """Check every requested diagonal block before replacing existing exports."""
+    for ki in kmesh:
+        rows = 0
+        for real, imag, sign in reader.sr_loop((ki, ki), compact=False):
+            if sign != 1 or real.shape != imag.shape or real.shape[1] != nao * nao:
+                raise ValueError("Incompatible Ewald correction block: AO dimensions or metric sign")
+            rows += real.shape[0]
+        if not 0 < rows <= naux:
+            raise ValueError("Incompatible Ewald correction block: auxiliary dimension")
+
+
+def compute_integrals(args, mycell, mydf, kmesh, nao, X_k=None, basename = "df_int", cderi_name="cderi.h5", keep=True, keep_after=False, cderi_name2=None):
+    """Export ordinary integrals, optionally substituting an explicit correction file."""
 
     kptij_idx, kij_conj, kij_trans, kpair_irre_list, num_kpair_stored, kptis, kptjs = integrals_grid(mycell, kmesh)
 
     mydf.kpts = kmesh
+    correction_df = None
+    apply_correction = cderi_name2 is not None
+    auxcell = addons.make_auxmol(mycell, mydf.auxbasis)
+    NQ = auxcell.nao_nr()
+    if apply_correction:
+        if not os.path.isfile(cderi_name2):
+            raise FileNotFoundError("Requested Ewald correction file is missing: " + str(cderi_name2))
+        import copy
+        correction_df = copy.copy(mydf)
+        correction_df._cderi = cderi_name2
+        _validate_corrected_blocks(correction_df, kmesh, nao, NQ)
     filename = basename + "/meta.h5"
     os.system("sync") # This is needed to syncronize the NFS between nodes
     if os.path.exists(basename):
@@ -379,16 +403,6 @@ def compute_integrals(args, mycell, mydf, kmesh, nao, X_k=None, basename = "df_i
     else:
         mydf._cderi_to_save = cderi_name
         mydf.build()
-    correction_df = None
-    apply_correction = False
-    if os.path.exists(cderi_name2) :
-        import copy
-        apply_correction = True
-        correction_df = copy.copy(mydf)
-        correction_df._cderi = cderi_name2
-
-    auxcell = addons.make_auxmol(mycell, mydf.auxbasis)
-    NQ = auxcell.nao_nr()
     print("NQ = ", NQ)
 
     # compute partitioning
@@ -447,6 +461,8 @@ def compute_integrals(args, mycell, mydf, kmesh, nao, X_k=None, basename = "df_i
             # s1 = NQ at maximum.
             s1 += Lpq.shape[0]
         if apply_correction and np.allclose(k1, k2) :
+            # A lower-rank corrected factor must not retain ordinary-factor rows.
+            buffer[cnt % chunk_size] = 0.0
             s1 = 0
             for XXX in correction_df.sr_loop((k1,k1), max_memory=4000, compact=False):
                 LpqR = XXX[0]
