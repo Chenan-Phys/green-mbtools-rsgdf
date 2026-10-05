@@ -4,7 +4,7 @@ import h5py
 import logging
 import numpy as np
 from pyscf.df import addons
-from pyscf.pbc import tools, gto
+from pyscf.pbc import tools, gto, df
 from pyscf.pbc.lib import kpts as libkpts
 
 from . import gdf_s_metric as gdf_S
@@ -84,6 +84,7 @@ class pyscf_pbc_init (pyscf_init):
             mydf = self.df_object()
 
         if os.path.exists("cderi.h5"):
+            int_utils.df_cache.validate_df_cache(mydf, "cderi.h5")
             mydf._cderi = "cderi.h5"
         else:
             mydf._cderi_to_save = "cderi.h5"
@@ -498,7 +499,11 @@ class pyscf_mol_init (pyscf_init):
 
         h_in.close()
         h_out.close()
-        mydf = comm.construct_gdf(self.args, self.kcell, self.kmesh)
+        configured = comm.construct_gdf(self.args, self.kcell, self.kmesh)
+        # This newly converted molecular file is read through PySCF's format
+        # adapter, not reused as a managed periodic producer cache.
+        mydf = df.GDF(self.kcell, self.kmesh)
+        mydf.auxbasis = configured.auxbasis
         int_utils.compute_integrals(self.args, self.kcell, mydf, self.kmesh, nao, X_k, "df_hf_int", "cderi.h5", True, self.args.keep_cderi, cderi_name2=None)
         mydf = None
 

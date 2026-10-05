@@ -17,6 +17,19 @@ not enable a correction implicitly. Correlation exports request that file
 explicitly; missing or incompatible corrected blocks fail before existing
 export files are replaced.
 
+New ordinary and corrected internal CDERI files carry versioned provenance.
+Reuse checks the backend, interaction role, actual producer, cell/AO and
+auxiliary bases, k mesh, PySCF version, precision/FFT settings, decomposition,
+rank threshold and symmetry settings. RSGDF reuse also requires complete actual
+frame metadata. A mismatch raises an error before existing outputs are replaced;
+start a new calculation directory rather than relabeling the cache.
+
+Untagged caches are rejected by default. `--allow_legacy_df_cache true` explicitly
+permits old ordinary CCGDF files without RSGDF frame metadata, with a warning
+that their backend/settings provenance cannot be verified. It never permits
+untagged RSGDF or corrected files. This compatibility option should be used only
+for a legacy CCGDF cache whose calculation settings the user has checked.
+
 RSGDF stores the actual metric whiteners from PySCF's q-group iterator, including
 conjugation, rank cutoff and Cholesky/eigenvalue convention, in its internal CDERI
 metadata. Stored auxiliary q transformations use those exact frames. Recomputing

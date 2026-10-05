@@ -19,7 +19,7 @@ from pyscf.pbc.df.rsdf_builder import _RSGDFBuilder
 from pyscf.pbc.df.gdf_builder import _CCGDFBuilder
 import scipy.linalg as LA
 
-from . import kpt_utils
+from . import kpt_utils, df_cache
 
 # Linear dep threshold for J2C metric eigenvalues
 J2C_LIN_DEP_THRESH = 1e-10
@@ -243,6 +243,7 @@ def build_legacy_ewald(mydf, cell, kmesh, cderi_file):
     pairs = np.asarray([(ki, ki) for ki in kmesh])
     with legacy_ewald_coulomb():
         legacy._make_j3c(mydf, cell, auxcell, pairs, cderi_file)
+    df_cache.write_cache_provenance(mydf, cderi_file, "ewald", "green_igen.df._make_j3c")
 
 # a = lattice vectors / (2*pi)
 @jit(nopython=True)
@@ -387,7 +388,11 @@ def compute_integrals(args, mycell, mydf, kmesh, nao, X_k=None, basename = "df_i
         import copy
         correction_df = copy.copy(mydf)
         correction_df._cderi = cderi_name2
+        if isinstance(mydf, GreenGDF):
+            df_cache.validate_df_cache(mydf, cderi_name2, role="ewald")
         _validate_corrected_blocks(correction_df, kmesh, nao, NQ)
+    if os.path.exists(cderi_name) and keep and isinstance(mydf, GreenGDF):
+        df_cache.validate_df_cache(mydf, cderi_name)
     filename = basename + "/meta.h5"
     os.system("sync") # This is needed to syncronize the NFS between nodes
     if os.path.exists(basename):
@@ -768,6 +773,9 @@ class GreenGDF(df.GDF):
                     raise RuntimeError("Missing or ambiguous RSGDF auxiliary frame at q=" + str(q))
                 feri[f'j2c/metric_factors/{iq}'] = matches[0]
         feri.close()
+        df_cache.write_cache_provenance(
+            self, cderi_file, "ordinary", self._green_df_builder_name,
+            effective_mesh=dfbuilder.mesh)
 
 
 def cholesky_decomposed_metric(j2c_k, cell, inv=False):

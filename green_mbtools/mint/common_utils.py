@@ -573,6 +573,9 @@ def add_pbc_params(parser):
               "the existing GREEN behavior and is the default. 'rsgdf' "
               "explicitly enables PySCF range-separated GDF."),
     )
+    parser.add_argument(
+        "--allow_legacy_df_cache", type=lambda x: str(x).lower() in ["true", "1", "yes"],
+        default=False, help="Explicitly allow untagged legacy CCGDF caches; their provenance cannot be verified.")
     parser.add_argument("--pseudo", type=str, nargs="*", default=[None], help="pseudopotential")
     parser.add_argument("--shift", type=float, nargs=3, default=[0.0, 0.0, 0.0], help="mesh shift")
     parser.add_argument("--center", type=float, nargs=3, default=[0.0, 0.0, 0.0], help="mesh center")
@@ -1447,6 +1450,8 @@ def construct_gdf(args, mycell, kmesh=None):
                 + ". Use ccgdf for these correction routes."
             )
     mydf._prefer_ccdf = backend == "ccgdf"
+    mydf._green_df_backend = backend
+    mydf.allow_legacy_df_cache = bool(getattr(args, "allow_legacy_df_cache", False))
     logging.info("Requested periodic DF backend: %s", backend)
     if args.auxbasis is not None:
         mydf.auxbasis = args.auxbasis
