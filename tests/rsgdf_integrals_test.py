@@ -149,13 +149,14 @@ def test_auxiliary_metric_equivalence(interactions):
 
 @pytest.mark.parametrize("space_symm", [True, False])
 @pytest.mark.parametrize("eig", ["true", "false"])
-def test_rsgdf_stored_polarization_covariance(tmp_path, monkeypatch, space_symm, eig):
+@pytest.mark.parametrize("backend", ["rsgdf", "ccgdf"])
+def test_stored_polarization_covariance(tmp_path, monkeypatch, space_symm, eig, backend):
     """Actual CDERI polarization tests spatial, TR and corrected q=0 frames."""
     monkeypatch.chdir(tmp_path)
     args = comm.init_pbc_params([
         "--a", "4 0 0\n0 4 0\n0 0 4", "--atom", "H 0 0 0\nH 0 0 1",
         "--basis", "sto3g", "--auxbasis", "weigend", "--nk", "3", "3", "1",
-        "--df_backend", "rsgdf", "--space_symm", str(space_symm).lower(), "--tr_symm", "true",
+        "--df_backend", backend, "--space_symm", str(space_symm).lower(), "--tr_symm", "true",
         "--use_j2c_eig_decomposition", eig,
         "--grid_only", "true", "--keep_cderi", "true",
         "--output_path", str(tmp_path / "input.h5")])

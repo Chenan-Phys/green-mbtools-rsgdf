@@ -7,10 +7,11 @@ import h5py
 import numpy as np
 import pyscf
 from pyscf.df import addons
+from . import df_metric
 
 
 SCHEMA_VERSION = 1
-FRAME_VERSION = 1
+FRAME_VERSION = 2
 GROUP = "green_cache"
 
 
@@ -38,7 +39,7 @@ def cache_request(mydf, role="ordinary"):
     auxcell = addons.make_auxmol(cell, mydf.auxbasis)
     backend = getattr(mydf, "_green_df_backend",
                       "ccgdf" if mydf._prefer_ccdf else "rsgdf")
-    return _plain({
+    request = {
         "backend": backend, "role": role, "pyscf_version": pyscf.__version__,
         "frame_version": FRAME_VERSION if backend == "rsgdf" and role == "ordinary" else 0,
         "cell": {
@@ -61,7 +62,11 @@ def cache_request(mydf, role="ordinary"):
             "tr_symm": bool(getattr(mydf, "tr_symm", False)),
             "x2c": int(getattr(mydf, "x2c", 0)),
         },
-    })
+    }
+    if role == "ordinary" and cell.dimension == 3:
+        request["frame_version"] = FRAME_VERSION
+        request["metric_algorithm"] = df_metric.ALGORITHM
+    return _plain(request)
 
 
 def write_cache_provenance(mydf, path, role, producer, effective_mesh=None):
@@ -90,10 +95,14 @@ def validate_df_cache(mydf, path, role="ordinary"):
     expected = cache_request(mydf, role)
     with h5py.File(path, "r") as f:
         if GROUP not in f:
+            if (role == "ordinary" and expected["cell"]["dimension"] == 3
+                    and expected["settings"]["eigenvalue"]):
+                _mismatch(path, "untagged eigenfactorized cache cannot certify metric normalization; regenerate it")
             # Old CCGDF files remain available through an explicit compatibility
             # option. Actual backend/settings cannot be certified without a tag.
             if (role == "ordinary" and expected["backend"] == "ccgdf"
                     and getattr(mydf, "allow_legacy_df_cache", False)
+                    and (expected["cell"]["dimension"] != 3 or not expected["settings"]["eigenvalue"])
                     and "j2c/metric_factors" not in f):
                 logging.warning(
                     "Reusing explicitly allowed untagged legacy CCGDF cache %s; "
@@ -119,16 +128,22 @@ def validate_df_cache(mydf, path, role="ordinary"):
                              "_RSGDFBuilder" if expected["backend"] == "rsgdf" else "_CCGDFBuilder")
         if producer != required_producer:
             _mismatch(path, "actual producer does not match the interaction/backend")
-        if role == "ordinary" and expected["backend"] == "rsgdf":
+        if role == "ordinary" and expected["frame_version"] == FRAME_VERSION:
+            label = expected["backend"].upper()
             if "j2c/metric_factors" not in f or "j2c/qmesh" not in f:
-                _mismatch(path, "missing actual RSGDF frame metadata")
+                _mismatch(path, "missing actual " + label + " frame metadata")
             factors = f["j2c/metric_factors"]
             nq = len(f["j2c/qmesh"])
             if set(factors) != {str(i) for i in range(nq)}:
-                _mismatch(path, "incomplete actual RSGDF frame metadata")
+                _mismatch(path, "incomplete actual " + label + " frame metadata")
             naux = expected["auxiliary"]["naux"]
-            for factor in factors.values():
+            if "j2c/metric_duals" not in f or set(f["j2c/metric_duals"]) != set(factors):
+                _mismatch(path, "missing or incomplete actual metric duals")
+            for name, factor in factors.items():
                 if factor.ndim != 2 or factor.shape[1] != naux or not 0 < factor.shape[0] <= naux:
-                    _mismatch(path, "invalid actual RSGDF frame dimensions")
+                    _mismatch(path, "invalid actual " + label + " frame dimensions")
+                dual = f["j2c/metric_duals/" + name]
+                if dual.shape != (naux, factor.shape[0]) or factor.attrs.get("factorization") not in {"ED", "CD"}:
+                    _mismatch(path, "invalid actual metric dual or factorization metadata")
     logging.info("Reusing checked %s DF cache %s (actual producer %s)", role, path, producer)
     return producer

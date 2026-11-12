@@ -44,12 +44,22 @@ gth-dzvp-molopt-sr. Generate both `si2tight-*` directories with `--system si
 option; production defaults are unchanged. `convergence.py ROOT` compares fresh
 1e-10 and 1e-12 ordinary builds against existing default-precision `si2-*` files.
 
-`validate-frames.py ROOT --fixtures si2tight --backends rsgdf` reconstructs
+For the strict full-q polarization check on both producers, generate fresh
+`si2verytight-*` fixtures with `--precision 1e-12`, then run both
+`compare-fixtures.py ROOT --fixtures si2verytight` and
+`validate-frames.py ROOT --fixtures si2verytight`. At 1e-10, cross-backend ERIs
+pass but CCGDF polarization covariance retains a small integration residual
+above the original tolerance. Tightening precision, without relaxing the
+comparison, removes that residual.
+
+`validate-frames.py ROOT --fixtures si2verytight` reconstructs
 polarization from actual factors and inverse overlaps, checking stored spatial
 and time-reversal q transformations, including the legacy corrected q=0 sector.
-The baseline CCGDF spatial q metadata fails this independent check on Si; this
-branch preserves its existing behavior and fixes the RSGDF path only. Use a
-CCGDF input with `--space_symm false` as the independent spatial-frame reference.
+The historical unscaled CCGDF spatial q metadata failed this independent check
+on Si. New 3D files retain actual whitening frames and stable duals for both
+builders; run the check on both backends using fresh files. Old ordinary caches
+are rejected by the metric-algorithm/frame provenance check. A spatially
+unreduced input remains a useful independent reference.
 
 For bounded memory growth, run `benchmark-build.py ROOT --backend BACKEND
 --nk N --label UNIQUE_LABEL` for N=2,3,4, and add a small-mesh larger basis with

@@ -19,7 +19,7 @@ from pyscf.pbc.df.rsdf_builder import _RSGDFBuilder
 from pyscf.pbc.df.gdf_builder import _CCGDFBuilder
 import scipy.linalg as LA
 
-from . import kpt_utils, df_cache
+from . import kpt_utils, df_cache, df_metric
 
 # Linear dep threshold for J2C metric eigenvalues
 J2C_LIN_DEP_THRESH = 1e-10
@@ -654,23 +654,53 @@ def compute_ewald_correction(args, maindf, kmesh, nao, filename = "df_ewald.h5",
     print("Ewald correction has been computed and stored into {}".format(filename))
 
 
-class _GreenRSGDFBuilder(_RSGDFBuilder):
-    """Keep the exact whitening frames used for ordinary CDERI construction."""
+class _GreenMetricBuilder:
+    """Equilibrate 3D eigenmetrics and retain the exact CDERI coordinate frames."""
+
+    def eigenvalue_decomposed_metric(self, j2c):
+        if self.cell.dimension != 3:
+            return super().eigenvalue_decomposed_metric(j2c)
+        whitener, dual = df_metric.scaled_eigen_metric(j2c, self.linear_dep_threshold)
+        self._green_last_eigen_frame = whitener, dual
+        return whitener, None, "ED"
 
     def gen_uniq_kpts_groups(self, *args, **kwargs):
         self.green_metric_factors = []
+        self.green_metric_duals = []
+        self.green_metric_tags = []
         for q, pairs, decomposition in super().gen_uniq_kpts_groups(*args, **kwargs):
             factor, negative, tag = decomposition
             if negative is not None:
                 raise NotImplementedError("RSGDF negative auxiliary metrics are not validated")
             if tag == "CD":
                 whitener = LA.solve_triangular(factor, np.eye(len(factor)), lower=True)
+                dual = factor
             elif tag == "ED":
                 whitener = np.asarray(factor)
+                if self.cell.dimension == 3:
+                    original, dual = self._green_last_eigen_frame
+                    if factor is not original:
+                        # PySCF yields the conjugate q group without a second
+                        # decomposition. Carry its dual through the same operation.
+                        if not np.array_equal(whitener, original.conj()):
+                            raise RuntimeError("Unrecognized conjugate auxiliary frame")
+                        dual = dual.conj()
+                else:
+                    dual = np.linalg.pinv(whitener)
             else:
                 raise RuntimeError("Unsupported PySCF metric factorization: " + str(tag))
             self.green_metric_factors.append((np.array(q), np.array(whitener)))
+            self.green_metric_duals.append(np.array(dual))
+            self.green_metric_tags.append(tag)
             yield q, pairs, decomposition
+
+
+class _GreenRSGDFBuilder(_GreenMetricBuilder, _RSGDFBuilder):
+    """Range-separated integrals in the actual, numerically stable metric frame."""
+
+
+class _GreenCCGDFBuilder(_GreenMetricBuilder, _CCGDFBuilder):
+    """Compensated-charge integrals with the same metric policy as RSGDF."""
 
 
 class GreenGDF(df.GDF):
@@ -713,7 +743,8 @@ class GreenGDF(df.GDF):
 
         if self._prefer_ccdf or cell.omega > 0:
             # For long-range integrals _CCGDFBuilder is the only option
-            dfbuilder = _CCGDFBuilder(cell, auxcell, kpts_union)
+            builder = _GreenCCGDFBuilder if cell.dimension == 3 else _CCGDFBuilder
+            dfbuilder = builder(cell, auxcell, kpts_union)
             dfbuilder.eta = self.eta
         else:
             dfbuilder = _GreenRSGDFBuilder(cell, auxcell, kpts_union)
@@ -759,19 +790,24 @@ class GreenGDF(df.GDF):
         feri['j2c/q_ibz2bz'] = q_ibz2bz
         feri['j2c/q_bz2ibz'] = np.asarray(qstruct.bz2ibz, dtype=int)
         feri['j2c'].attrs['j2c_decomposition'] = 'eigenvalue' if dfbuilder.j2c_eig_always else 'cholesky'
-        if isinstance(dfbuilder, _GreenRSGDFBuilder):
+        if isinstance(dfbuilder, _GreenMetricBuilder):
             # Include conjugate groups exactly as yielded by PySCF. Independently
             # diagonalizing a transformed metric loses signs/degenerate rotations.
             for iq, q in enumerate(uniq_qpts):
                 matches = []
-                for actual_q, factor in dfbuilder.green_metric_factors:
+                for index, (actual_q, factor) in enumerate(dfbuilder.green_metric_factors):
                     delta = cell.get_scaled_kpts(actual_q - q)
                     delta -= np.rint(delta)
                     if np.linalg.norm(delta) < 1e-8:
-                        matches.append(factor)
+                        matches.append(index)
                 if len(matches) != 1:
-                    raise RuntimeError("Missing or ambiguous RSGDF auxiliary frame at q=" + str(q))
-                feri[f'j2c/metric_factors/{iq}'] = matches[0]
+                    raise RuntimeError("Missing or ambiguous auxiliary frame at q=" + str(q))
+                index = matches[0]
+                factor = feri.create_dataset(f'j2c/metric_factors/{iq}',
+                    data=dfbuilder.green_metric_factors[index][1])
+                factor.attrs['factorization'] = dfbuilder.green_metric_tags[index]
+                feri[f'j2c/metric_duals/{iq}'] = dfbuilder.green_metric_duals[index]
+            feri['j2c'].attrs['metric_algorithm'] = df_metric.ALGORITHM
         feri.close()
         df_cache.write_cache_provenance(
             self, cderi_file, "ordinary", self._green_df_builder_name,
@@ -818,6 +854,11 @@ def cholesky_decomposed_metric(j2c_k, cell, inv=False):
 
 
 def eigenvalue_decomposed_metric(j2c_k, cell, inv=False):
+    if cell.dimension == 3:
+        # Matrix-only compatibility helper. New producer/symmetry paths use
+        # their stored actual frames rather than reconstructing them here.
+        whitener, dual = df_metric.scaled_eigen_metric(j2c_k, J2C_LIN_DEP_THRESH)
+        return (whitener if inv else dual), None
     j2c_negative = None
     cond_num = np.linalg.cond(j2c_k)
     if cond_num > 1e12:

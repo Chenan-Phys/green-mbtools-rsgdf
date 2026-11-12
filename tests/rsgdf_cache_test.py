@@ -3,6 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import json
 
 import h5py
 import numpy as np
@@ -128,6 +129,9 @@ def test_untagged_ccgdf_requires_explicit_compatibility(caches, tmp_path, monkey
                                       + ["--allow_legacy_df_cache", str(allow).lower()])
     with h5py.File(cache, "a") as f:
         del f[iu.df_cache.GROUP]
+        # Genuine old CCGDF caches did not contain actual coordinate frames.
+        del f["j2c/metric_factors"]
+        del f["j2c/metric_duals"]
     before = digest(cache)
     if allow:
         system.mean_field_input()
@@ -170,3 +174,53 @@ def test_invalid_provenance_rejected(caches, tmp_path, monkeypatch, damage):
             group.attrs["producer"] = "_CCGDFBuilder"
     with pytest.raises(RuntimeError, match="DF cache mismatch"):
         system.mean_field_input()
+
+
+@pytest.mark.parametrize("backend", ["ccgdf","rsgdf"])
+@pytest.mark.parametrize("damage", ["old_metric", "dual", "factorization"])
+def test_metric_algorithm_and_actual_duals_are_required(caches,tmp_path,monkeypatch,backend,damage):
+    system,cache=prepared(caches,tmp_path,monkeypatch,backend)
+    with h5py.File(cache,"a") as f:
+        if damage=="old_metric":
+            group=f[iu.df_cache.GROUP]
+            request=json.loads(group["request"].asstr()[()])
+            request.pop("metric_algorithm")
+            request["frame_version"]=1 if backend=="rsgdf" else 0
+            text=iu.df_cache._json(request)
+            group["request"][()]=text
+            group.attrs["request_sha256"]=hashlib.sha256(text.encode()).hexdigest()
+        elif damage=="dual":
+            del f["j2c/metric_duals/0"]
+        else:
+            f["j2c/metric_factors/0"].attrs["factorization"]="unknown"
+    before=digest(cache)
+    with pytest.raises(RuntimeError,match="DF cache mismatch"):
+        system.mean_field_input()
+    assert digest(cache)==before
+
+
+def test_untagged_3d_eigen_cache_requires_regeneration(caches,tmp_path,monkeypatch):
+    system,cache=prepared(caches,tmp_path,monkeypatch,"ccgdf")
+    mydf=system.df_object()
+    mydf.allow_legacy_df_cache=True
+    mydf.use_j2c_eig_decomposition=True
+    with h5py.File(cache,"a") as f:
+        del f[iu.df_cache.GROUP]
+        del f["j2c/metric_factors"]
+        del f["j2c/metric_duals"]
+    before=digest(cache)
+    with pytest.raises(RuntimeError,match="untagged eigenfactorized cache"):
+        iu.df_cache.validate_df_cache(mydf,cache)
+    assert digest(cache)==before
+
+
+def test_untagged_nonperiodic_ccgdf_compatibility_unchanged(tmp_path):
+    from pyscf.pbc import gto
+    from types import SimpleNamespace
+    cell=gto.Cell(a=np.eye(3)*4,atom="H 0 0 0; H 0 0 .74",basis="sto3g",dimension=0,verbose=0).build()
+    args=SimpleNamespace(df_backend="ccgdf",auxbasis="weigend",beta=None,Nk=0,use_j2c_eig_decomposition=True)
+    mydf=comm.construct_gdf(args,cell,cell.make_kpts([1,1,1]))
+    mydf.allow_legacy_df_cache=True
+    path=tmp_path/"legacy.h5"
+    with h5py.File(path,"w"):pass
+    assert iu.df_cache.validate_df_cache(mydf,path)=="legacy-unverified"

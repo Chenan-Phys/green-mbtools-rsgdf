@@ -1177,6 +1177,10 @@ def store_auxcell_kstruct_ops_info(args, auxcell, kmesh):
     # For j2c_sqrt_inv, we will compute it on the fly as we construct kspace_orep_p0
     j2c_sqrt_irre = []
     for irre_q in irre_q_inds:
+        if "j2c/metric_factors" in j2c_data:
+            # Actual frames and their stable duals already define the coordinates.
+            # Re-diagonalizing the raw metric loses that convention and accuracy.
+            continue
         j2c_i = j2c_data[f'j2c/{irre_q}'][...]
         j2c_i_dagger = j2c_i.conj().T
         assert np.allclose(j2c_i, j2c_i_dagger, atol=1e-10, rtol=0), "j2c metric is not Hermitian"
@@ -1213,14 +1217,14 @@ def store_auxcell_kstruct_ops_info(args, auxcell, kmesh):
         # Build transformation operator in the aux-AO basis connecting "ik" with "irre_k"
         mat_ao = get_representation(ik, iop, auxcell, qstruct)
         if "j2c/metric_factors" in j2c_data:
-            # RSGDF frames come from the actual builder, including its absolute
-            # rank cutoff and conjugation. Retain CCGDF's existing metadata path.
+            # Both ordinary builders retain the actual frame and its dual.
             target = j2c_data[f"j2c/metric_factors/{ik}"][()]
             source = j2c_data[f"j2c/metric_factors/{irre_q_bz}"][()]
             if qstruct.time_reversal_symm_bz[ik]:
                 target = target.conj()
             nrows, ncols = target.shape[0], source.shape[0]
-            kspace_orep_p0[ik, :nrows, :ncols] = target @ mat_ao @ np.linalg.pinv(source)
+            dual = j2c_data[f"j2c/metric_duals/{irre_q_bz}"][()]
+            kspace_orep_p0[ik, :nrows, :ncols] = target @ mat_ao @ dual
             kspace_orep_j2c[ik] = mat_ao
             continue
         # obtain J^{1/2} (q_IBZ) from pre-computed list
