@@ -1,0 +1,6 @@
+{
+  "url": "https://github.com/Green-Phys/green-mbtools/blob/master/green_mbtools/mint/migrate.py",
+  "git_blob_sha": "322a5f833a93ccbadf94def6d07574085de5b0d3",
+  "modified": false,
+  "usage": "Official 1.0.0-to-1.1.0 conversion, imported with the fixed producer package only to reuse its unchanged integrals_grid helper."
+}

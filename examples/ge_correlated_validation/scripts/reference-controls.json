@@ -1,0 +1,17 @@
+{
+  "default": {
+    "relative_number_tolerance": 1e-12,
+    "energy_threshold_hartree": 1e-11,
+    "itermax": 300,
+    "timeout_seconds": 3600
+  },
+  "overrides": {
+    "GW@6.225000": {
+      "relative_number_tolerance": 1e-14,
+      "energy_threshold_hartree": 1e-11,
+      "itermax": 1300,
+      "timeout_seconds": 3600,
+      "reason": "Observed late GW transient and a slow linear-mixing tail. Use conservative mixing and a larger bounded iteration allowance for a fresh reproduction. Original failures and actual continuation commands remain in evidence."
+    }
+  }
+}
